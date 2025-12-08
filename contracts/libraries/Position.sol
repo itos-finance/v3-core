@@ -41,11 +41,13 @@ library Position {
     /// @param liquidityDelta The change in pool liquidity as a result of the position update
     /// @param feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
     /// @param feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
+    /// @param feeTokenIs0 Should we pay fees in token0 or token1.
     function update(
         Info storage self,
         int128 liquidityDelta,
         uint256 feeGrowthInside0X128,
-        uint256 feeGrowthInside1X128
+        uint256 feeGrowthInside1X128,
+        bool feeTokenIs0
     ) internal {
         Info memory _self = self;
 
@@ -80,8 +82,12 @@ library Position {
             self.feeGrowthInside1LastX128 = feeGrowthInside1X128;
             if (tokensOwed0 > 0 || tokensOwed1 > 0) {
                 // overflow is acceptable, have to withdraw before you hit type(uint128).max fees
-                self.tokensOwed0 += tokensOwed0;
-                self.tokensOwed1 += tokensOwed1;
+                // Since we only use one fee token, we add both inside fees to just one side.
+                if (feeTokenIs0) {
+                    self.tokensOwed0 += tokensOwed0 + tokensOwed1;
+                } else {
+                    self.tokensOwed1 += tokensOwed0 + tokensOwed1;
+                }
             }
         }
     }

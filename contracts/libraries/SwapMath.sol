@@ -9,6 +9,7 @@ import './SqrtPriceMath.sol';
 library SwapMath {
     /// @notice Computes the result of swapping some amount in, or amount out, given the parameters of the swap
     /// @dev The fee, plus the amount in, will never exceed the amount remaining if the swap's `amountSpecified` is positive
+    /// @dev if !feeOnIn, the amountOut INCLUDES the fee amount.
     /// @param sqrtRatioCurrentX96 The current sqrt price of the pool
     /// @param sqrtRatioTargetX96 The price that cannot be exceeded, from which the direction of the swap is inferred
     /// @param liquidity The usable liquidity
@@ -17,28 +18,23 @@ library SwapMath {
     /// @return sqrtRatioNextX96 The price after swapping the amount in/out, not to exceed the price target
     /// @return amountIn The amount to be swapped in, of either token0 or token1, based on the direction of the swap
     /// @return amountOut The amount to be received, of either token0 or token1, based on the direction of the swap
-    /// @return feeAmount The amount of input that will be taken as a fee
+    /// @return feeAmount The amount of input or output that will be taken as a fee
     function computeSwapStep(
         uint160 sqrtRatioCurrentX96,
         uint160 sqrtRatioTargetX96,
         uint128 liquidity,
         int256 amountRemaining,
-        uint24 feePips
-    )
-        internal
-        pure
-        returns (
-            uint160 sqrtRatioNextX96,
-            uint256 amountIn,
-            uint256 amountOut,
-            uint256 feeAmount
-        )
-    {
+        uint24 feePips,
+        bool feeOnIn
+    ) internal pure returns (uint160 sqrtRatioNextX96, uint256 amountIn, uint256 amountOut, uint256 feeAmount) {
         bool zeroForOne = sqrtRatioCurrentX96 >= sqrtRatioTargetX96;
         bool exactIn = amountRemaining >= 0;
+        uint256 amountRemainingWithFee;
 
         if (exactIn) {
-            uint256 amountRemainingLessFee = FullMath.mulDiv(uint256(amountRemaining), 1e6 - feePips, 1e6);
+            uint256 amountRemainingLessFee = feeOnIn
+                ? FullMath.mulDiv(uint256(amountRemaining), 1e6 - feePips, 1e6)
+                : uint256(amountRemaining);
             amountIn = zeroForOne
                 ? SqrtPriceMath.getAmount0Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, true)
                 : SqrtPriceMath.getAmount1Delta(sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, true);
@@ -51,15 +47,18 @@ library SwapMath {
                     zeroForOne
                 );
         } else {
+            amountRemainingWithFee = feeOnIn
+                ? uint256(-amountRemaining)
+                : FullMath.mulDivRoundingUp(uint256(-amountRemaining), 1e6 + feePips, 1e6);
             amountOut = zeroForOne
                 ? SqrtPriceMath.getAmount1Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, false)
                 : SqrtPriceMath.getAmount0Delta(sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, false);
-            if (uint256(-amountRemaining) >= amountOut) sqrtRatioNextX96 = sqrtRatioTargetX96;
+            if (amountRemainingWithFee >= amountOut) sqrtRatioNextX96 = sqrtRatioTargetX96;
             else
                 sqrtRatioNextX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
                     sqrtRatioCurrentX96,
                     liquidity,
-                    uint256(-amountRemaining),
+                    amountRemainingWithFee,
                     zeroForOne
                 );
         }
@@ -84,15 +83,23 @@ library SwapMath {
         }
 
         // cap the output amount to not exceed the remaining output amount
-        if (!exactIn && amountOut > uint256(-amountRemaining)) {
-            amountOut = uint256(-amountRemaining);
+        if (!exactIn && amountOut > amountRemainingWithFee) {
+            amountOut = amountRemainingWithFee;
         }
 
-        if (exactIn && sqrtRatioNextX96 != sqrtRatioTargetX96) {
-            // we didn't reach the target, so take the remainder of the maximum input as fee
-            feeAmount = uint256(amountRemaining) - amountIn;
+        if (feeOnIn) {
+            if (exactIn && sqrtRatioNextX96 != sqrtRatioTargetX96) {
+                // we didn't reach the target, so take the remainder of the maximum input as fee
+                feeAmount = uint256(amountRemaining) - amountIn;
+            } else {
+                feeAmount = FullMath.mulDivRoundingUp(amountIn, feePips, 1e6 - feePips);
+            }
         } else {
-            feeAmount = FullMath.mulDivRoundingUp(amountIn, feePips, 1e6 - feePips);
+            if (!exactIn && sqrtRatioNextX96 != sqrtRatioTargetX96) {
+                feeAmount = amountOut - uint256(-amountRemaining);
+            } else {
+                feeAmount = FullMath.mulDivRoundingUp(amountOut, feePips, 1e6 + feePips);
+            }
         }
     }
 }

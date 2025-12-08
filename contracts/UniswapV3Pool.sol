@@ -46,6 +46,8 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
     address public immutable override token1;
     /// @inheritdoc IUniswapV3PoolImmutables
     uint24 public immutable override fee;
+    /// @inheritdoc IUniswapV3PoolSingleFee
+    address public immutable override feeToken;
 
     /// @inheritdoc IUniswapV3PoolImmutables
     int24 public immutable override tickSpacing;
@@ -116,7 +118,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
 
     constructor() {
         int24 _tickSpacing;
-        (factory, token0, token1, fee, _tickSpacing) = IUniswapV3PoolDeployer(msg.sender).parameters();
+        (factory, token0, token1, fee, _tickSpacing, feeToken) = IUniswapV3PoolDeployer(msg.sender).parameters();
         tickSpacing = _tickSpacing;
 
         maxLiquidityPerTick = Tick.tickSpacingToMaxLiquidityPerTick(_tickSpacing);
@@ -438,7 +440,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
             _feeGrowthGlobal1X128
         );
 
-        position.update(liquidityDelta, feeGrowthInside0X128, feeGrowthInside1X128);
+        position.update(liquidityDelta, feeGrowthInside0X128, feeGrowthInside1X128, feeToken == token0);
 
         // clear any tick data that is no longer needed
         if (liquidityDelta < 0) {
@@ -564,6 +566,8 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
         uint160 sqrtPriceX96;
         // the tick associated with the current price
         int24 tick;
+        // Should the fee rate be applied on the input amount or the output amount
+        bool feeOnIn;
         // the global fee growth of the input token
         uint256 feeGrowthGlobalX128;
         // amount of input token paid as protocol fee
@@ -627,6 +631,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
             amountCalculated: 0,
             sqrtPriceX96: slot0Start.sqrtPriceX96,
             tick: slot0Start.tick,
+            feeOnIn: zeroForOne != (token1 == feeToken),
             feeGrowthGlobalX128: zeroForOne ? feeGrowthGlobal0X128 : feeGrowthGlobal1X128,
             protocolFee: 0,
             liquidity: cache.liquidityStart
@@ -662,15 +667,26 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
                     : step.sqrtPriceNextX96,
                 state.liquidity,
                 state.amountSpecifiedRemaining,
-                fee
+                fee,
+                state.feeOnIn
             );
 
-            if (exactInput) {
-                state.amountSpecifiedRemaining -= (step.amountIn + step.feeAmount).toInt256();
-                state.amountCalculated = state.amountCalculated.sub(step.amountOut.toInt256());
+            if (state.feeOnIn) {
+                if (exactInput) {
+                    state.amountSpecifiedRemaining -= (step.amountIn + step.feeAmount).toInt256();
+                    state.amountCalculated = state.amountCalculated.sub(step.amountOut.toInt256());
+                } else {
+                    state.amountSpecifiedRemaining += step.amountOut.toInt256();
+                    state.amountCalculated = state.amountCalculated.add((step.amountIn + step.feeAmount).toInt256());
+                }
             } else {
-                state.amountSpecifiedRemaining += step.amountOut.toInt256();
-                state.amountCalculated = state.amountCalculated.add((step.amountIn + step.feeAmount).toInt256());
+                if (exactInput) {
+                    state.amountSpecifiedRemaining -= step.amountIn.toInt256();
+                    state.amountCalculated = state.amountCalculated.sub((step.amountOut - step.feeAmount).toInt256());
+                } else {
+                    state.amountSpecifiedRemaining += (step.amountOut - step.feeAmount).toInt256();
+                    state.amountCalculated = state.amountCalculated.add(step.amountIn.toInt256());
+                }
             }
 
             // if the protocol fee is on, calculate how much is owed, decrement feeAmount, and increment protocolFee
