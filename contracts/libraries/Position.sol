@@ -5,6 +5,8 @@ import './FullMath.sol';
 import './FixedPoint128.sol';
 import './LiquidityMath.sol';
 
+import {console} from 'forge-std/console.sol';
+
 /// @title Position
 /// @notice Positions represent an owner address' liquidity between a lower and upper tick boundary
 /// @dev Positions store additional state for tracking fees owed to the position
@@ -41,15 +43,15 @@ library Position {
     /// @param liquidityDelta The change in pool liquidity as a result of the position update
     /// @param feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
     /// @param feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
-    /// @param feeTokenIs0 Should we pay fees in token0 or token1.
     function update(
         Info storage self,
         int128 liquidityDelta,
         uint256 feeGrowthInside0X128,
-        uint256 feeGrowthInside1X128,
-        bool feeTokenIs0
+        uint256 feeGrowthInside1X128
     ) internal {
         Info memory _self = self;
+
+        console.log('in update');
 
         uint128 liquidityNext;
         if (liquidityDelta == 0) {
@@ -68,6 +70,9 @@ library Position {
                     FixedPoint128.Q128
                 )
             );
+            console.log('feeGrowthInside0X128:', feeGrowthInside0X128);
+            console.log('_self.feeGrowthInside0LastX128:', _self.feeGrowthInside0LastX128);
+            console.log('_self.liquidity:', _self.liquidity);
             uint128 tokensOwed1 = uint128(
                 FullMath.mulDiv(
                     feeGrowthInside1X128 - _self.feeGrowthInside1LastX128,
@@ -80,15 +85,14 @@ library Position {
             if (liquidityDelta != 0) self.liquidity = liquidityNext;
             self.feeGrowthInside0LastX128 = feeGrowthInside0X128;
             self.feeGrowthInside1LastX128 = feeGrowthInside1X128;
+            console.log('tokensOwed0:', tokensOwed0);
+            console.log('tokensOwed1:', tokensOwed1);
             if (tokensOwed0 > 0 || tokensOwed1 > 0) {
                 // overflow is acceptable, have to withdraw before you hit type(uint128).max fees
-                // Since we only use one fee token, we add both inside fees to just one side.
-                if (feeTokenIs0) {
-                    self.tokensOwed0 += tokensOwed0 + tokensOwed1;
-                } else {
-                    self.tokensOwed1 += tokensOwed0 + tokensOwed1;
-                }
+                self.tokensOwed0 += tokensOwed0;
+                self.tokensOwed1 += tokensOwed1;
             }
         }
+        console.log('exiting update');
     }
 }

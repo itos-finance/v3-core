@@ -27,6 +27,8 @@ import './interfaces/callback/IUniswapV3MintCallback.sol';
 import './interfaces/callback/IUniswapV3SwapCallback.sol';
 import './interfaces/callback/IUniswapV3FlashCallback.sol';
 
+import {console} from 'forge-std/console.sol';
+
 contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
     using LowGasSafeMath for uint256;
     using LowGasSafeMath for int256;
@@ -321,6 +323,8 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
             _slot0.tick
         );
 
+        console.log('updated');
+
         if (params.liquidityDelta != 0) {
             if (_slot0.tick < params.tickLower) {
                 // current tick is below the passed range; liquidity can only become in range by crossing from left to
@@ -366,6 +370,8 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
                 );
             }
         }
+
+        console.log('modified');
     }
 
     /// @dev Gets and updates a position with the given liquidity delta
@@ -384,6 +390,9 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
 
         uint256 _feeGrowthGlobal0X128 = feeGrowthGlobal0X128; // SLOAD for gas optimization
         uint256 _feeGrowthGlobal1X128 = feeGrowthGlobal1X128; // SLOAD for gas optimization
+
+        console.log('feeGrowthGlobal0X128:', _feeGrowthGlobal0X128);
+        console.log('feeGrowthGlobal1X128:', _feeGrowthGlobal1X128);
 
         // if we need to update the ticks, do it
         bool flippedLower;
@@ -440,9 +449,10 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
             _feeGrowthGlobal1X128
         );
 
-        position.update(liquidityDelta, feeGrowthInside0X128, feeGrowthInside1X128, feeToken == token0);
+        position.update(liquidityDelta, feeGrowthInside0X128, feeGrowthInside1X128);
 
         // clear any tick data that is no longer needed
+        console.log('liquidity Delta:', liquidityDelta);
         if (liquidityDelta < 0) {
             if (flippedLower) {
                 ticks.clear(tickLower);
@@ -451,6 +461,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
                 ticks.clear(tickUpper);
             }
         }
+        console.log('ticks cleared');
     }
 
     /// @inheritdoc IUniswapV3PoolActions
@@ -528,14 +539,26 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
             })
         );
 
+        console.log('modifed in burn');
+
+        console.log('amount0Int:', amount0Int);
+        console.log('amount1Int:', amount1Int);
+
         amount0 = uint256(-amount0Int);
         amount1 = uint256(-amount1Int);
 
+        console.log('amount0:', amount0);
+        console.log('amount1:', amount1);
+
         if (amount0 > 0 || amount1 > 0) {
+            console.log('position.tokensOwed0 before:', position.tokensOwed0);
+            console.log('position.tokensOwed1 before:', position.tokensOwed1);
             (position.tokensOwed0, position.tokensOwed1) = (
                 position.tokensOwed0 + uint128(amount0),
                 position.tokensOwed1 + uint128(amount1)
             );
+            console.log('position.tokensOwed0 after:', position.tokensOwed0);
+            console.log('position.tokensOwed1 after:', position.tokensOwed1);
         }
 
         emit Burn(msg.sender, tickLower, tickUpper, amount, amount0, amount1);
@@ -719,8 +742,8 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
                     }
                     int128 liquidityNet = ticks.cross(
                         step.tickNext,
-                        (zeroForOne ? state.feeGrowthGlobalX128 : feeGrowthGlobal0X128),
-                        (zeroForOne ? feeGrowthGlobal1X128 : state.feeGrowthGlobalX128),
+                        (feeToken == token0 ? state.feeGrowthGlobalX128 : feeGrowthGlobal0X128),
+                        (feeToken == token0 ? feeGrowthGlobal1X128 : state.feeGrowthGlobalX128),
                         cache.secondsPerLiquidityCumulativeX128,
                         cache.tickCumulative,
                         cache.blockTimestamp
@@ -765,7 +788,7 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
 
         // update fee growth global and, if necessary, protocol fees
         // overflow is acceptable, protocol has to withdraw before it hits type(uint128).max fees
-        if (zeroForOne) {
+        if (feeToken == token0) {
             feeGrowthGlobal0X128 = state.feeGrowthGlobalX128;
             if (state.protocolFee > 0) protocolFees.token0 += state.protocolFee;
         } else {
